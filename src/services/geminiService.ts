@@ -1,7 +1,8 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// Conexión con la API Key definida en tu Vite Config
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+
+const MODEL_NAME = "gemini-1.5-flash-latest";
 
 export interface HealthReport {
   score: number;
@@ -22,8 +23,8 @@ export interface AnalysisResponse {
 }
 
 const ANALYSIS_SYSTEM_INSTRUCTION = `
-Actúas como el backend inteligente de una aplicación de optimización laboral IT. 
-Tu flujo de trabajo es estrictamente secuencial y orientado a la acción. 
+Actúas como el backend inteligente de una aplicación de optimización laboral IT.
+Tu flujo de trabajo es estrictamente secuencial y orientado a la acción.
 
 REGLAS DE IDIOMA:
 1. El "report" (Health Report) y razones de cambio deben ser SIEMPRE EN ESPAÑOL.
@@ -45,45 +46,67 @@ Responde estrictamente en formato JSON.
 `;
 
 const OPTIMIZE_SYSTEM_INSTRUCTION = `
-Actúas como un experto en reclutamiento IT de clase mundial. 
+Actúas como un experto en reclutamiento IT de clase mundial.
 Tu tarea es entregar el CV Final Optimizado en un formato estructurado y profesional.
 
 REGLAS DE IDIOMA:
 - El CV debe estar EXACTAMENTE en el mismo idioma que el CV original. No traduzcas títulos ni contenido. Si el CV original está en inglés, el resultado DEBE ser en inglés. Si es en español, el resultado DEBE ser en español.
 
 REGLAS DE FORMATO Y ENLACES (CRÍTICO):
-- Los enlaces (LinkedIn, Portfolio, GitHub, etc.) DEBEN escribirse como TEXTO PLANO COMPLETO. 
-- NUNCA uses la sintaxis de Markdown [Texto](url). 
+- Los enlaces (LinkedIn, Portfolio, GitHub, etc.) DEBEN escribirse como TEXTO PLANO COMPLETO.
+- NUNCA uses la sintaxis de Markdown [Texto](url).
 - EJEMPLO CORRECTO: https://www.linkedin.com/in/usuario/
 - EJEMPLO INCORRECTO: [LinkedIn](https://www.linkedin.com/in/usuario/)
 - Estructura: Usa # para el nombre, ## para secciones grandes y ### para cargos/empresas.
 - No inventes información. Si faltan datos, usa placeholders o deja el espacio.
 `;
 
-export async function analyzeCV(cvText: string): Promise<AnalysisResponse> {
-  const model = genAI.getGenerativeModel({ 
-    model: "gemini-2.0-flash",
-    systemInstruction: ANALYSIS_SYSTEM_INSTRUCTION 
-  });
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      const is429 = error?.message?.includes("429") || error?.message?.includes("quota");
+      if (!is429 || attempt === maxRetries - 1) throw err;
 
-  const response = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: cvText }] }],
-    generationConfig: {
-      responseMimeType: "application/json",
+      // Parse retry delay from error message, fallback to exponential backoff
+      const retryMatch = error.message?.match(/retryDelay":"(\d+)s/);
+      const waitSeconds = retryMatch ? parseInt(retryMatch[1]) + 2 : (attempt + 1) * 15;
+      console.warn(`Rate limited. Retrying in ${waitSeconds}s... (attempt ${attempt + 1}/${maxRetries})`);
+      await new Promise((res) => setTimeout(res, waitSeconds * 1000));
     }
-  });
+  }
+  throw new Error("Max retries exceeded");
+}
 
-  const text = response.response.text();
-  return JSON.parse(text || "{}");
+export async function analyzeCV(cvText: string): Promise<AnalysisResponse> {
+  return withRetry(async () => {
+    const model = genAI.getGenerativeModel({
+      model: MODEL_NAME,
+      systemInstruction: ANALYSIS_SYSTEM_INSTRUCTION,
+    });
+
+    const response = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: cvText }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+      },
+    });
+
+    const text = response.response.text();
+    return JSON.parse(text || "{}");
+  });
 }
 
 export async function optimizeCV(cvText: string, plan: ImprovementItem[]): Promise<string> {
-  const model = genAI.getGenerativeModel({ 
-    model: "gemini-2.0-flash",
-    systemInstruction: OPTIMIZE_SYSTEM_INSTRUCTION 
-  });
+  return withRetry(async () => {
+    const model = genAI.getGenerativeModel({
+      model: MODEL_NAME,
+      systemInstruction: OPTIMIZE_SYSTEM_INSTRUCTION,
+    });
 
-  const prompt = `
+    const prompt = `
   CV Original:
   ${cvText}
 
@@ -93,6 +116,7 @@ export async function optimizeCV(cvText: string, plan: ImprovementItem[]): Promi
   Por favor, genera el CV final optimizado siguiendo las instrucciones del sistema.
   `;
 
-  const response = await model.generateContent(prompt);
-  return response.response.text() || "";
+    const response = await model.generateContent(prompt);
+    return response.response.text() || "";
+  });
 }
