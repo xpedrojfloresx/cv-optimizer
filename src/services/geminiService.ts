@@ -1,6 +1,7 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Conexión con la API Key definida en tu Vite Config
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 export interface HealthReport {
   score: number;
@@ -43,47 +44,6 @@ Genera una tabla comparativa titulada "Plan de Mejora" con:
 Responde estrictamente en formato JSON.
 `;
 
-export async function analyzeCV(cvText: string): Promise<AnalysisResponse> {
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: cvText,
-    config: {
-      systemInstruction: ANALYSIS_SYSTEM_INSTRUCTION,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          report: {
-            type: Type.OBJECT,
-            properties: {
-              score: { type: Type.INTEGER },
-              keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
-              weaknesses: { type: Type.ARRAY, items: { type: Type.STRING } },
-            },
-            required: ["score", "keywords", "weaknesses"],
-          },
-          improvementPlan: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                section: { type: Type.STRING },
-                original: { type: Type.STRING },
-                proposed: { type: Type.STRING },
-                reason: { type: Type.STRING },
-              },
-              required: ["section", "original", "proposed", "reason"],
-            },
-          },
-        },
-        required: ["report", "improvementPlan"],
-      },
-    },
-  });
-
-  return JSON.parse(response.text || "{}");
-}
-
 const OPTIMIZE_SYSTEM_INSTRUCTION = `
 Actúas como un experto en reclutamiento IT de clase mundial. 
 Tu tarea es entregar el CV Final Optimizado en un formato estructurado y profesional.
@@ -100,7 +60,29 @@ REGLAS DE FORMATO Y ENLACES (CRÍTICO):
 - No inventes información. Si faltan datos, usa placeholders o deja el espacio.
 `;
 
+export async function analyzeCV(cvText: string): Promise<AnalysisResponse> {
+  const model = genAI.getGenerativeModel({ 
+    model: "gemini-1.5-flash",
+    systemInstruction: ANALYSIS_SYSTEM_INSTRUCTION 
+  });
+
+  const response = await model.generateContent({
+    contents: [{ role: "user", parts: [{ text: cvText }] }],
+    generationConfig: {
+      responseMimeType: "application/json",
+    }
+  });
+
+  const text = response.response.text();
+  return JSON.parse(text || "{}");
+}
+
 export async function optimizeCV(cvText: string, plan: ImprovementItem[]): Promise<string> {
+  const model = genAI.getGenerativeModel({ 
+    model: "gemini-1.5-flash",
+    systemInstruction: OPTIMIZE_SYSTEM_INSTRUCTION 
+  });
+
   const prompt = `
   CV Original:
   ${cvText}
@@ -111,13 +93,6 @@ export async function optimizeCV(cvText: string, plan: ImprovementItem[]): Promi
   Por favor, genera el CV final optimizado siguiendo las instrucciones del sistema.
   `;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      systemInstruction: OPTIMIZE_SYSTEM_INSTRUCTION,
-    },
-  });
-
-  return response.text || "";
+  const response = await model.generateContent(prompt);
+  return response.response.text() || "";
 }
