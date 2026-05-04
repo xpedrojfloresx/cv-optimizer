@@ -1,8 +1,8 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-const MODEL_NAME = "gemini-1.5-flash-latest";
+const MODEL_NAME = "gemini-2.0-flash-lite";
 
 export interface HealthReport {
   score: number;
@@ -70,7 +70,6 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
       const is429 = error?.message?.includes("429") || error?.message?.includes("quota");
       if (!is429 || attempt === maxRetries - 1) throw err;
 
-      // Parse retry delay from error message, fallback to exponential backoff
       const retryMatch = error.message?.match(/retryDelay":"(\d+)s/);
       const waitSeconds = retryMatch ? parseInt(retryMatch[1]) + 2 : (attempt + 1) * 15;
       console.warn(`Rate limited. Retrying in ${waitSeconds}s... (attempt ${attempt + 1}/${maxRetries})`);
@@ -82,41 +81,40 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
 
 export async function analyzeCV(cvText: string): Promise<AnalysisResponse> {
   return withRetry(async () => {
-    const model = genAI.getGenerativeModel({
+    const response = await ai.models.generateContent({
       model: MODEL_NAME,
-      systemInstruction: ANALYSIS_SYSTEM_INSTRUCTION,
-    });
-
-    const response = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: cvText }] }],
-      generationConfig: {
+      config: {
+        systemInstruction: ANALYSIS_SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
       },
+      contents: cvText,
     });
 
-    const text = response.response.text();
+    const text = response.text ?? "";
     return JSON.parse(text || "{}");
   });
 }
 
 export async function optimizeCV(cvText: string, plan: ImprovementItem[]): Promise<string> {
   return withRetry(async () => {
-    const model = genAI.getGenerativeModel({
+    const prompt = `
+CV Original:
+${cvText}
+
+Plan de Mejora a aplicar:
+${JSON.stringify(plan, null, 2)}
+
+Por favor, genera el CV final optimizado siguiendo las instrucciones del sistema.
+    `;
+
+    const response = await ai.models.generateContent({
       model: MODEL_NAME,
-      systemInstruction: OPTIMIZE_SYSTEM_INSTRUCTION,
+      config: {
+        systemInstruction: OPTIMIZE_SYSTEM_INSTRUCTION,
+      },
+      contents: prompt,
     });
 
-    const prompt = `
-  CV Original:
-  ${cvText}
-
-  Plan de Mejora a aplicar:
-  ${JSON.stringify(plan, null, 2)}
-
-  Por favor, genera el CV final optimizado siguiendo las instrucciones del sistema.
-  `;
-
-    const response = await model.generateContent(prompt);
-    return response.response.text() || "";
+    return response.text ?? "";
   });
 }
