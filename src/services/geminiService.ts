@@ -62,7 +62,7 @@ REGLAS DE FORMATO Y ENLACES (CRÍTICO):
 
 export async function analyzeCV(cvText: string): Promise<AnalysisResponse> {
   const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash",
+    model: "gemini-2.0-flash",
     systemInstruction: ANALYSIS_SYSTEM_INSTRUCTION 
   });
 
@@ -79,7 +79,7 @@ export async function analyzeCV(cvText: string): Promise<AnalysisResponse> {
 
 export async function optimizeCV(cvText: string, plan: ImprovementItem[]): Promise<string> {
   const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash",
+    model: "gemini-2.0-flash",
     systemInstruction: OPTIMIZE_SYSTEM_INSTRUCTION 
   });
 
